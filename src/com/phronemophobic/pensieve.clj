@@ -255,11 +255,11 @@
       (read-bytes is n))]))
 
 
-(defn struct-parser* [name args fields]
+(defn struct-tokenizer* [name args fields]
   (let [rf## (gensym "rf_")
         sink## (gensym "sink_")
         source## (gensym "source_")
-        parse-fn## (gensym "parse-fn_")
+        tokenize-fn## (gensym "tokenize-fn_")
         bindings (into []
                        (comp
                         (partition-all 2)
@@ -267,19 +267,19 @@
                          (fn [[k type]]
                            (if (symbol? k)
                              ;; assume single output
-                             [[k source##] `(~parse-fn## #(do %2) nil ~source## ~type)
+                             [[k source##] `(~tokenize-fn## #(do %2) nil ~source## ~type)
                               sink## `(~rf## ~sink## ~(keyword k))
                               sink## `(~rf## ~sink## ~k)]
                              ;; else
                              [sink## `(~rf## ~sink## ~k)
-                              [sink## source##] `(~parse-fn## ~rf## ~sink## ~source## ~type)])))
+                              [sink## source##] `(~tokenize-fn## ~rf## ~sink## ~source## ~type)])))
                         (partition-all 2)
                         #_(interpose [(gensym "__") `(when (reduced? ~sink##)
                                                        (throw (Exception. "Reduced!")))])
                         cat)
                        
                        fields)]
-    `(fn [~parse-fn##]
+    `(fn [~tokenize-fn##]
        (fn [~rf## ~sink## ~source## ~@args]
          (let [~sink## (~rf## ~sink## [:begin ~name])]
            (let ~bindings
@@ -287,18 +287,18 @@
                ~[sink## source##])))))))
 
 
-(defmacro struct-parser [name args fields]
-  (struct-parser* name args fields))
+(defmacro struct-tokenizer [name args fields]
+  (struct-tokenizer* name args fields))
 
-(def struct-parsers (atom {}))
+(def struct-tokenizers (atom {}))
 
-(defmacro def-struct-parser [name args fields]
+(defmacro def-struct-tokenizer [name args fields]
   `(let [name# ~name
-         parser# (struct-parser name# ~args ~fields)]
-     (swap! struct-parsers assoc name# parser#)
+         tokenizer# (struct-tokenizer name# ~args ~fields)]
+     (swap! struct-tokenizers assoc name# tokenizer#)
      nil))
 
-(def-struct-parser
+(def-struct-tokenizer
   ::hprof
   []
   [ ;; ::struct ;; :file-header 
@@ -316,7 +316,7 @@
                 8 ::int64)]]])
 
 
-(def-struct-parser
+(def-struct-tokenizer
   ::record
   [id-type]
   [tag ::uint8
@@ -324,21 +324,21 @@
    remaining-bytes ::uint32
    :body [::record-body id-type tag remaining-bytes]])
 
-(defn parse-record-body [parse-fn]
+(defn tokenize-record-body [tokenize-fn]
   (fn [rf sink source id-type tag remaining-bytes]
     (let [type (get tag-name tag)]
-      (parse-fn rf sink source [type id-type remaining-bytes]))))
+      (tokenize-fn rf sink source [type id-type remaining-bytes]))))
 
 
-(swap! struct-parsers
-       assoc ::record-body parse-record-body)
+(swap! struct-tokenizers
+       assoc ::record-body tokenize-record-body)
 
 
 ;; * HPROF_UTF8               a UTF8-encoded name
 ;; *
 ;; *               id         name ID
 ;; *               [u1]*      UTF8 characters (no trailing zero)
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_UTF8
   [id-type remaining-bytes]
   [:id id-type
@@ -350,7 +350,7 @@
 ;; *                id        class object ID
 ;; *                u4        stack trace serial number
 ;; *                id        class name ID
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_LOAD_CLASS ;; a newly loaded class
   [id-type remaining-size]
   [:class-serial-number ::uint32
@@ -363,7 +363,7 @@
 ;; * HPROF_UNLOAD_CLASS       an unloading class
 ;; *
 ;; *                u4        class serial_number
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_UNLOAD_CLASS ;; an unloading class
   [id-type remaining-size]
   [:class-serial-number ::uint32])
@@ -379,7 +379,7 @@
 ;; *                                       -1: unknown
 ;; *                                       -2: compiled method
 ;; *                                       -3: native method
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_FRAME ;; a Java stack trace
   [id-type remaining-size]
   [:stack-frame-id id-type
@@ -396,7 +396,7 @@
 ;; *               u4         thread serial number
 ;; *               u4         number of frames
 ;; *               [id]*      stack frame IDs
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_TRACE ;; a Java stack trace
   [id-type remaining-size]
   [:stacktrace-serial-number ::uint32
@@ -431,7 +431,7 @@
 ;; *                u4        number of instances alive
 ;; *                u4        number of bytes allocated
 ;; *                u4]*      number of instance allocated
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_ALLOC_SITES ;; a set of heap allocation sites, obtained after GC
   [id-type remaining-size]
   [:flags ::uint16
@@ -460,7 +460,7 @@
 ;; *               id         thread name ID
 ;; *               id         thread group name ID
 ;; *               id         thread group parent name ID
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_START_THREAD ;; a newly started thread.
   [id-type remaining-size]
   [:thread-serial-number ::uint32
@@ -473,7 +473,7 @@
 ;; * HPROF_END_THREAD         a terminating thread.
 ;; *
 ;; *               u4         thread serial number
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_END_THREAD ;; a terminating thread.
   [id-type remaining-size]
   [:thread-serial-number ::uint32])
@@ -484,7 +484,7 @@
 ;; *               u4         total live instances
 ;; *               u8         total bytes allocated
 ;; *               u8         total instances allocated
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_HEAP_SUMMARY ;; heap summary
   [id-type remaining-size]
   [:total-live-bytes ::uint32
@@ -493,12 +493,12 @@
    :total-instances-allocated ::uint64])
 
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_UNKNOWN
   [id-type]
   [:object-id id-type])
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_THREAD_OBJ
   [id-type]
   [:thread-object-id id-type
@@ -507,50 +507,50 @@
 
 
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_JNI_GLOBAL ;; JNI global ref root
   [id-type]
   [:object-id id-type
    :jni-global-ref-id id-type])
 
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_JNI_LOCAL ;; JNI local ref
   [id-type]
   [:object-id id-type
    :thread-serial-number ::uint32
    :frame-number ::uint32])
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_JAVA_FRAME ;; Java stack frame
   [id-type]
   [:object-id id-type
    :thread-serial-number ::uint32
    :frame-number ::uint32])
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_NATIVE_STACK
   [id-type]
   [:object-id id-type
    :thread-serial-number ::uint32])
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_STICKY_CLASS ;; System class
   [id-type]
   [:object-id id-type])
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_THREAD_BLOCK ;; Reference from thread block
   [id-type]
   [:object-id id-type
    :thread-serial-number ::uint32])
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_ROOT_MONITOR_USED ;; Busy monitor
   [id-type]
   [:object-id id-type])
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_CLASS_DUMP
   [id-type]
   [
@@ -614,7 +614,7 @@
 ;;            u4         number of bytes that follow
 ;;            [vl]*      instance field values (class, followed
 ;;                       by super, super's super ...)
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_INSTANCE_DUMP ;; dump of a normal object
   [id-type]
   [:object-id id-type
@@ -630,7 +630,7 @@
 ;;            u4         number of elements
 ;;            id         array class ID
 ;;            [id]*      elements
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_OBJ_ARRAY_DUMP ;; dump of an object array
   [id-type]
   [:object-id id-type
@@ -656,15 +656,15 @@
 ;;            [u1]*      elements
 
 (do
-  (defn parse-primitive-array [parse-fn]
+  (defn tokenize-primitive-array [tokenize-fn]
     (fn [rf sink source element-type num-elements id-type]
       (let [type-name (get field-name element-type)]
-        (parse-fn rf sink source [::n num-elements [type-name id-type]]))))
+        (tokenize-fn rf sink source [::n num-elements [type-name id-type]]))))
   
-  (swap! struct-parsers
-         assoc ::primitive-array parse-primitive-array))
+  (swap! struct-tokenizers
+         assoc ::primitive-array tokenize-primitive-array))
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_GC_PRIM_ARRAY_DUMP ;; dump of a primitive array
   [id-type]
   [:object-id id-type
@@ -692,135 +692,135 @@
 #_unused?
 
 (do
-  (defn parse-heap-dump-segment [parse-fn]
+  (defn tokenize-heap-dump-segment [tokenize-fn]
     (fn [rf sink source id-type remaining-bytes]
-      (let [[buf source] (parse-fn #(do %2) nil source [::bytes remaining-bytes])
+      (let [[buf source] (tokenize-fn #(do %2) nil source [::bytes remaining-bytes])
             sub-source (PushbackInputStream. (ByteArrayInputStream. buf) 1)
             sink (rf sink [:begin :HPROF_HEAP_DUMP_SEGMENT])
             sink (rf sink :records)
-            [sink _] (parse-fn rf sink sub-source [:+
+            [sink _] (tokenize-fn rf sink sub-source [:+
                                                    [::heap-dump-record id-type]])
             sink (rf sink [:end :HPROF_HEAP_DUMP_SEGMENT])]
         [sink source])))
   
-  (swap! struct-parsers
-         assoc :HPROF_HEAP_DUMP_SEGMENT parse-heap-dump-segment))
+  (swap! struct-tokenizers
+         assoc :HPROF_HEAP_DUMP_SEGMENT tokenize-heap-dump-segment))
 
 
-(def-struct-parser
+(def-struct-tokenizer
   ::heap-dump-record
   [id-type]
   [subrecord-type ::uint8
    :heap-dump-body [::heap-dump-body id-type subrecord-type]])
 
-(def-struct-parser
+(def-struct-tokenizer
   :HPROF_HEAP_DUMP_END ;; a Java stack trace
   [id-type remaining-size]
   [])
 
 (do
   ;; helper for debugging
-  (defn parse-rest [parse-fn]
+  (defn tokenize-rest [tokenize-fn]
     (fn [rf sink source]
       (loop [n 0]
-        (let [[byte source] (parse-fn #(do %2) nil source ::uint8)]
+        (let [[byte source] (tokenize-fn #(do %2) nil source ::uint8)]
           (if (= -1 byte)
             (do (prn n)
                 [sink source])
             (recur (inc n)))))))
   
-  (swap! struct-parsers
-         assoc ::parse-rest parse-rest))
+  (swap! struct-tokenizers
+         assoc ::tokenize-rest tokenize-rest))
 
 
 
 
 (do
-  (defn parse-n [parse-fn]
+  (defn tokenize-n [tokenize-fn]
     (fn [rf sink source n type]
       (let [sink (rf sink ::start-vec)]
         (loop [[sink source] [sink source]
                n n]
           (if (pos? n)
-            (let [[sink source :as result] (parse-fn rf sink source type)]
+            (let [[sink source :as result] (tokenize-fn rf sink source type)]
               (if (reduced? sink)
                 result
                 (recur result (dec n))))
             (let [sink (rf sink ::end)]
               [sink source]))))))
   
-  (swap! struct-parsers
-         assoc ::n parse-n))
+  (swap! struct-tokenizers
+         assoc ::n tokenize-n))
 
 
 (do
-  (defn parse-static-field-value [parse-fn]
+  (defn tokenize-static-field-value [tokenize-fn]
     (fn [rf sink source id-type field-type]
       (let [type-name (get field-name field-type)]
         (assert type-name (str "Unknown field type: " field-type))
-        (parse-fn rf sink source [type-name id-type]))))
+        (tokenize-fn rf sink source [type-name id-type]))))
   
-  (swap! struct-parsers
-         assoc ::static-field-value parse-static-field-value))
+  (swap! struct-tokenizers
+         assoc ::static-field-value tokenize-static-field-value))
 
-(def-struct-parser :HPROF_ARRAY_OBJECT
+(def-struct-tokenizer :HPROF_ARRAY_OBJECT
   [id-type]
   [:object-id id-type])
 
-(def-struct-parser :HPROF_NORMAL_OBJECT
+(def-struct-tokenizer :HPROF_NORMAL_OBJECT
   [id-type]
   [:object-id id-type])
 
 (do
-  (defn parse-field-value-bool [parse-fn]
+  (defn tokenize-field-value-bool [tokenize-fn]
     (fn [rf sink source id-type]
-      (let [[bool source] (parse-fn #(do %2) nil source ::uint8)
+      (let [[bool source] (tokenize-fn #(do %2) nil source ::uint8)
             sink (rf sink (zero? bool))]
         [sink source])))
   
-  (swap! struct-parsers
-         assoc :HPROF_BOOLEAN parse-field-value-bool))
+  (swap! struct-tokenizers
+         assoc :HPROF_BOOLEAN tokenize-field-value-bool))
 
 
 (do
-  (defn parse-field-value-char [parse-fn]
+  (defn tokenize-field-value-char [tokenize-fn]
     (fn [rf sink source id-type]
-      (let [[c source] (parse-fn #(do %2) nil source ::uint16)
+      (let [[c source] (tokenize-fn #(do %2) nil source ::uint16)
             sink (rf sink (char c))]
         [sink source])))
   
-  (swap! struct-parsers
-         assoc :HPROF_CHAR parse-field-value-char))
+  (swap! struct-tokenizers
+         assoc :HPROF_CHAR tokenize-field-value-char))
 
 
-(def-struct-parser :HPROF_FLOAT
+(def-struct-tokenizer :HPROF_FLOAT
   [id-type]
   [:float-value ::float32])
-(def-struct-parser :HPROF_DOUBLE
+(def-struct-tokenizer :HPROF_DOUBLE
   [id-type]
   [:float-value ::float64])
 
-(def-struct-parser :HPROF_BYTE
+(def-struct-tokenizer :HPROF_BYTE
   [id-type]
   [:byte-value ::int8])
-(def-struct-parser :HPROF_SHORT
+(def-struct-tokenizer :HPROF_SHORT
   [id-type]
   [:short-value ::int16])
-(def-struct-parser :HPROF_INT
+(def-struct-tokenizer :HPROF_INT
   [id-type]
   [:int-value ::int32])
-(def-struct-parser :HPROF_LONG
+(def-struct-tokenizer :HPROF_LONG
   [id-type]
   [:long-value ::int64])
 
-(def-struct-parser
+(def-struct-tokenizer
   ::static-field
   [id-type]
   [:static-field-name id-type
    static-field-type ::uint8
    :static-field-value [::static-field-value id-type static-field-type]])
 
-(def-struct-parser
+(def-struct-tokenizer
   ::instance-field
   [id-type]
   [:instance-field-name id-type
@@ -829,56 +829,56 @@
 
 
 (do
-  (defn parse-heap-dump-body [parse-fn]
+  (defn tokenize-heap-dump-body [tokenize-fn]
     (fn [rf sink source id-type subrecord-type]
       (let [type-name (get heap-dump-tag-name subrecord-type)]
         (assert type-name (str "Unknown heap dump subrecord type: " subrecord-type))
-        (parse-fn rf sink source [type-name id-type]))))
+        (tokenize-fn rf sink source [type-name id-type]))))
   
-  (swap! struct-parsers
-         assoc ::heap-dump-body parse-heap-dump-body))
+  (swap! struct-tokenizers
+         assoc ::heap-dump-body tokenize-heap-dump-body))
 
 
-(defn parse-one-or-more [parse-fn]
+(defn tokenize-one-or-more [tokenize-fn]
   (fn [rf sink source type]
     (let [sink (rf sink ::start-vec)]
       (loop [[sink source] [sink source]]
-        (let [[eof? source] (parse-fn #(do %2) nil source ::eof?)]
+        (let [[eof? source] (tokenize-fn #(do %2) nil source ::eof?)]
           (if eof?
             (let [sink (rf sink ::end)]
               [sink source])
-            (let [[sink source :as result] (parse-fn rf sink source type)]
+            (let [[sink source :as result] (tokenize-fn rf sink source type)]
               (if (reduced? sink)
                 result
                 (recur result)))))))))
 
-(swap! struct-parsers
-       assoc :+ parse-one-or-more)
+(swap! struct-tokenizers
+       assoc :+ tokenize-one-or-more)
 
 
-(defn parse-tag-string [parse-fn]
+(defn tokenize-tag-string [tokenize-fn]
   (fn [rf sink source id-type remaining-bytes]
-    (let [[bytes source] (parse-fn #(do %2) nil source [::bytes (- remaining-bytes
+    (let [[bytes source] (tokenize-fn #(do %2) nil source [::bytes (- remaining-bytes
                                                                    (case id-type
                                                                      ::int32 4
                                                                      ::int64 8))])]
       [(rf sink (String. bytes "utf-8")) source])))
 
 
-(swap! struct-parsers
-       assoc ::tag-string parse-tag-string)
+(swap! struct-tokenizers
+       assoc ::tag-string tokenize-tag-string)
 
 
-(defn make-parser [all-parsers]
-  (fn parse-fn* [rf sink source type & args]
+(defn make-tokenizer [all-tokenizers]
+  (fn tokenize-fn* [rf sink source type & args]
     (cond
       (vector? type)
-      (apply parse-fn* rf sink source type)
+      (apply tokenize-fn* rf sink source type)
 
-      (contains? all-parsers type)
-      (let [f (get all-parsers type)]
+      (contains? all-tokenizers type)
+      (let [f (get all-tokenizers type)]
         (try
-          (apply (f parse-fn*) rf sink source args)
+          (apply (f tokenize-fn*) rf sink source args)
           (catch Exception e
             (println type)
             (throw e))))
@@ -888,22 +888,22 @@
                       {:type type
                        :args args})))))
 
-(defn parse!
+(defn tokenize!
   ([xform f fname]
-   (parse! xform f (f) fname))
+   (tokenize! xform f (f) fname))
   ([xform f init fname]
-   (let [parser (make-parser
+   (let [tokenizer (make-tokenizer
                  (merge inputstream-readers
-                        @struct-parsers))
+                        @struct-tokenizers))
          rf (xform f)]
      (let [[result _]
            (with-open [is (io/input-stream fname)
                        pbis (PushbackInputStream. is 1)]
-             (parser rf init pbis ::hprof))]
+             (tokenizer rf init pbis ::hprof))]
        (f (unreduced result))))))
 
 (comment
-  (parse! (comp (take 30)) conj [] "mem.hprof" ::hprof)
+  (tokenize! (comp (take 30)) conj [] "mem.hprof" ::hprof)
   ,)
 
 
@@ -1220,11 +1220,11 @@
 (comment
   (let [xform
         (comp (find-key :instance-field-name))]
-    (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
+    (def tags (tokenize! xform conj []  "mem.hprof" ::hprof)))
 
   (let [xform
         (comp (find-key :super-class-object-id))]
-    (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
+    (def tags (tokenize! xform conj []  "mem.hprof" ::hprof)))
   ,
   )
 
@@ -1267,13 +1267,13 @@
 
 (comment
 
-  (def full-parse
-    (parse! identity hydrate "mem.hprof"))
+  (def full-tokenize
+    (tokenize! identity hydrate "mem.hprof"))
 
   (defn ->classes? [fname]
     (let [xform
           (comp (find-struct :HPROF_LOAD_CLASS))
-          tags (parse! xform conj []  fname ::hprof)
+          tags (tokenize! xform conj []  fname ::hprof)
           result (hydrate (reduce hydrate (hydrate nil ::start-vec) tags) ::end)]
       (into {}
             (map (fn [{:keys [object-id class-name-id]}]
@@ -1284,7 +1284,7 @@
 
   (def my-str-map (->string-map "mem.hprof") )
 
-  (def class-object-ids (parse! (find-key :class-object-id) conj [] "mem.hprof" ::hprof))
+  (def class-object-ids (tokenize! (find-key :class-object-id) conj [] "mem.hprof" ::hprof))
   (def class-names (map my-str-map class-object-ids))
 
   (->> (clojure.reflect/reflect Class)
@@ -1309,9 +1309,9 @@
   )
 
 (comment
-  (def full-parse
-    (parse! identity hydrate "mem.hprof"))
-  (def cds (class-defs full-parse))
-  (def id->str (->string-map full-parse))
+  (def full-tokenize
+    (tokenize! identity hydrate "mem.hprof"))
+  (def cds (class-defs full-tokenize))
+  (def id->str (->string-map full-tokenize))
   (def instances)
   ,)
