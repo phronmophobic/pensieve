@@ -33,13 +33,16 @@
      (rf)
      z]))
 
-(defn hydrate [z token]
-  (case token
-    ::start-vec (begin-vec z)
-    ::start-map (begin-map z)
-    ::end (end z)
-    ;; else
-    (append z token)))
+(defn hydrate
+  ([] (hydrate nil ::start-vec))
+  ([z] (hydrate z ::end))
+  ([z token]
+   (case token
+     ::start-vec (begin-vec z)
+     ::start-map (begin-map z)
+     ::end (end z)
+     ;; else
+     (append z token))))
 
 
 (comment
