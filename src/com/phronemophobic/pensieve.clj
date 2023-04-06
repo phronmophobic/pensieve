@@ -1243,36 +1243,44 @@
 
 
 
-(defn hydrate [z token]
-  (case token
-    ::start-vec (collect/begin-vec z)
-    ::start-map (collect/begin-map z)
-    ::end (collect/end z)
-    ;; else
-    (cond
-      (vector? token)
-      (let [[event type] token]
-        (case event
-          :begin (-> z
-                     (collect/begin-map)
-                     (hydrate :type)
-                     (hydrate type))
-          :end (collect/end z)))
+(defn hydrate
+  ([] nil)
+  ([z] z)
+  ([z token]
+   (case token
+     ::start-vec (collect/begin-vec z)
+     ::start-map (collect/begin-map z)
+     ::end (collect/end z)
+     ;; else
+     (cond
+       (vector? token)
+       (let [[event type] token]
+         (case event
+           :begin (-> z
+                      (collect/begin-map)
+                      (hydrate :type)
+                      (hydrate type))
+           :end (collect/end z)))
 
-      :else
-      (collect/append z token))))
+       :else
+       (collect/append z token)))))
 
 (defn ->string-map [fname]
   (let [xform
         (comp (find-struct ::HPROF_UTF8))
-        tags (parse! xform conj []  fname ::hprof)
+        tags (parse! xform conj [] fname)
         strs (hydrate (reduce hydrate (hydrate nil ::start-vec) tags) ::end)]
     (into {}
           (map (fn [{:keys [id str]}]
                  [id str]))
           strs)))
 
+
+
 (comment
+
+  (def full-parse
+    (parse! identity hydrate "mem.hprof"))
 
   (defn ->classes? [fname]
     (let [xform
