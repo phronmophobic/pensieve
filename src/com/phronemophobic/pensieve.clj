@@ -878,40 +878,40 @@
 
 
 
-(defn parse! [xform f init fname type & args]
-  (let [
-        parser
-        (fn parse-fn [rf sink source type & args]
-          (cond
-            (vector? type)
-            (apply parse-fn rf sink source type)
+(defn parse!
+  ([xform f fname]
+   (parse! xform f (f) fname))
+  ([xform f init fname]
+   (let [parser
+         (fn parse-fn [rf sink source type & args]
+           (cond
+             (vector? type)
+             (apply parse-fn rf sink source type)
 
-            (contains? inputstream-readers type)
-            (let [{:keys [f]} (get inputstream-readers type)
-                  
-                  [source x] (apply f source args)]
-              (let [sink (rf sink x)]
-                [sink source]))
+             (contains? inputstream-readers type)
+             (let [{:keys [f]} (get inputstream-readers type)
+                   [source x] (apply f source args)]
+               (let [sink (rf sink x)]
+                 [sink source]))
 
-            (contains? @struct-parsers type)
-            (let [f (get @struct-parsers type)]
-              (try
-                (apply (f parse-fn) rf sink source args)
-                (catch Exception e
-                  (println type)
-                  (throw e))))
+             (contains? @struct-parsers type)
+             (let [f (get @struct-parsers type)]
+               (try
+                 (apply (f parse-fn) rf sink source args)
+                 (catch Exception e
+                   (println type)
+                   (throw e))))
 
-            :else
-            (throw (ex-info (str "Unknown type: " type)
-                            {:type type
-                             :args args}))))
-        
-        rf (xform f)]
-    (let [[result _]
-          (with-open [is (io/input-stream fname)
-                      pbis (PushbackInputStream. is 1)]
-            (apply parser rf init pbis type args))]
-      (unreduced result))))
+             :else
+             (throw (ex-info (str "Unknown type: " type)
+                             {:type type
+                              :args args}))))
+         rf (xform f)]
+     (let [[result _]
+           (with-open [is (io/input-stream fname)
+                       pbis (PushbackInputStream. is 1)]
+             (parser rf init pbis ::hprof))]
+       (f (unreduced result))))))
 
 (comment
   (parse! (comp (take 30)) conj [] "mem.hprof" ::hprof)
