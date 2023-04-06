@@ -92,8 +92,12 @@
 
 (defmacro rfn [k [input & args] & body]
   `(let [k# ~k]
-     {:f (fn [~input ~@args]
-           ~@body)
+     {:f (fn [_#]
+           (fn [rf# sink# ~input ~@args]
+             (let [[source# ret#] (do
+                                    ~@body)
+                   sink# (rf# sink# ret#)]
+               [sink# source#])))
       :k k#}))
 
 (defn read-bytes [is n]
@@ -108,7 +112,7 @@
 (def inputstream-readers
   (into
    {}
-   (map (juxt :k identity))
+   (map (juxt :k :f))
    [(rfn ::uint8 [is]
       [is (.read ^InputStream is)])
 
@@ -865,49 +869,32 @@
        assoc ::tag-string parse-tag-string)
 
 
+(defn make-parser [all-parsers]
+  (fn parse-fn* [rf sink source type & args]
+    (cond
+      (vector? type)
+      (apply parse-fn* rf sink source type)
 
+      (contains? all-parsers type)
+      (let [f (get all-parsers type)]
+        (try
+          (apply (f parse-fn*) rf sink source args)
+          (catch Exception e
+            (println type)
+            (throw e))))
 
-
-;; (defn parse-identifier [parse-fn]
-;;   (fn [rf sink source identifier-size]
-;;     (case identifier-size
-;;       4 (parse-fn rf sink source ::uint32)
-;;       8 (parse-fn rf sink source ::int64))))
-
-
-;; (swap! struct-parsers
-;;        assoc ::identifier parse-identifier)
-
-
+      :else
+      (throw (ex-info (str "Unknown type: " type)
+                      {:type type
+                       :args args})))))
 
 (defn parse!
   ([xform f fname]
    (parse! xform f (f) fname))
   ([xform f init fname]
-   (let [parser
-         (fn parse-fn [rf sink source type & args]
-           (cond
-             (vector? type)
-             (apply parse-fn rf sink source type)
-
-             (contains? inputstream-readers type)
-             (let [{:keys [f]} (get inputstream-readers type)
-                   [source x] (apply f source args)]
-               (let [sink (rf sink x)]
-                 [sink source]))
-
-             (contains? @struct-parsers type)
-             (let [f (get @struct-parsers type)]
-               (try
-                 (apply (f parse-fn) rf sink source args)
-                 (catch Exception e
-                   (println type)
-                   (throw e))))
-
-             :else
-             (throw (ex-info (str "Unknown type: " type)
-                             {:type type
-                              :args args}))))
+   (let [parser (make-parser
+                 (merge inputstream-readers
+                        @struct-parsers))
          rf (xform f)]
      (let [[result _]
            (with-open [is (io/input-stream fname)
@@ -1267,15 +1254,14 @@
        :else
        (collect/append z token)))))
 
-(defn ->string-map [fname]
-  (let [xform
-        (comp (find-struct :HPROF_UTF8))
-        tags (parse! xform conj [] fname)
-        strs (hydrate (reduce hydrate (hydrate nil ::start-vec) tags) ::end)]
-    (into {}
-          (map (fn [{:keys [id str]}]
-                 [id str]))
-          strs)))
+(defn ->string-map [hprof]
+  (into {}
+        (comp
+         (map :body)
+         (filter #(= :HPROF_UTF8 (:type %)))
+         (map (fn [{:keys [id str]}]
+                [id str])))
+        (:records hprof)))
 
 
 
@@ -1306,4 +1292,26 @@
        (filter #(instance? clojure.reflect.Field %))
        (map :name)
        )
+
+
   )
+
+
+(defn class-defs [hprof]
+  (->> hprof
+       :records
+       (map :body)
+       (filter #(= :HPROF_HEAP_DUMP_SEGMENT (:type %)))
+       (mapcat :records)
+       (map :heap-dump-body)
+       (filter #(= :HPROF_GC_CLASS_DUMP (:type %)))
+       (into {} (map (juxt :class-object-id identity))))
+  )
+
+(comment
+  (def full-parse
+    (parse! identity hydrate "mem.hprof"))
+  (def cds (class-defs full-parse))
+  (def id->str (->string-map full-parse))
+  (def instances)
+  ,)
