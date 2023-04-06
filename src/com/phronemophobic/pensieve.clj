@@ -89,23 +89,11 @@
                [v k]))
         field-types))
 
-;; (defonce all-readers (atom {}))
-
 (defmacro rfn [k [input & args] & body]
   `(let [k# ~k]
      {:f (fn [~input ~@args]
            ~@body)
       :k k#}))
-
-;; (defmacro defr [k [input & args] & body]
-;;   `(let [k# ~k
-;;          reader#
-;;          (rfn k# ~(into [input] args) ~@body)]
-;;      (swap! all-readers assoc k# reader#)))
-
-;; [new-source input] (read source type & args?)
-;; [new-output new-input] (parse rf sink source type)
-;; (defn parse [rf sink [source type]])
 
 (def inputstream-readers
   (into
