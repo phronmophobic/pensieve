@@ -309,16 +309,19 @@
    :low-word ::uint32
    ;; * [record]*  a sequence of records.
    :records [:+
-             [::record identifier-size]]])
+             [::record
+              (case identifier-size
+                4 ::int32
+                8 ::int64)]]])
 
 
 (def-struct-parser
   ::record
-  [identifier-size]
+  [id-type]
   [tag ::uint8
    :microseconds ::uint32
    remaining-bytes ::uint32
-   :body [::record-body identifier-size tag remaining-bytes]])
+   :body [::record-body id-type tag remaining-bytes]])
 
 
 ;; * HPROF_LOAD_CLASS         a newly loaded class
@@ -329,11 +332,11 @@
 ;; *                id        class name ID
 (def-struct-parser
   ::HPROF_LOAD_CLASS ;; a newly loaded class
-  [identifier-size remaining-size]
+  [id-type remaining-size]
   [:class-serial-number ::uint32
-   :object-id [::identifier identifier-size]
+   :object-id id-type
    :stacktrace-serial-number ::uint32
-   :class-name-id [::identifier identifier-size]])
+   :class-name-id id-type])
 
 
 ;; * HPROF_TRACE              a Java stack trace
@@ -344,11 +347,11 @@
 ;; *               [id]*      stack frame IDs
 (def-struct-parser
   ::HPROF_TRACE ;; a Java stack trace
-  [identifier-size remaining-size]
+  [id-type remaining-size]
   [:stacktrace-serial-number ::uint32
    :thread-serial-number ::uint32
    num-frames ::uint32
-   :frame-ids [::n num-frames [::identifier identifier-size]]])
+   :frame-ids [::n num-frames id-type]])
 
 
 ;; * HPROF_FRAME              a Java stack frame
@@ -364,17 +367,17 @@
 ;; *                                       -3: native method
 (def-struct-parser
   ::HPROF_FRAME ;; a Java stack trace
-  [identifier-size remaining-size]
-  [:stack-frame-id [::identifier identifier-size]
-   :method-name-id [::identifier identifier-size]
-   :method-signature-id [::identifier identifier-size]
-   :source-file-name-id [::identifier identifier-size]
+  [id-type remaining-size]
+  [:stack-frame-id id-type
+   :method-name-id id-type
+   :method-signature-id id-type
+   :source-file-name-id id-type
    :serial-number ::uint32
    :line-number ::int32])
 
 (def-struct-parser
   ::HPROF_HEAP_DUMP_END ;; a Java stack trace
-  [identifier-size remaining-size]
+  [id-type remaining-size]
   [])
 
 (do
@@ -393,16 +396,16 @@
 
 #_(def-struct-parser
   ::HPROF_HEAP_DUMP_SEGMENT
-  [identifier-size remaining-size]
-  [:subrecords [:+ [::heap-dump-record identifier-size]]])
+  [id-type remaining-size]
+  [:subrecords [:+ [::heap-dump-record id-type]]])
 
 (do
   (defn parse-heap-dump-segment [parse-fn]
-    (fn [rf sink source identifier-size remaining-bytes]
+    (fn [rf sink source id-type remaining-bytes]
       (let [[buf source] (parse-fn #(do %2) nil source [::bytes remaining-bytes])
             sub-source (PushbackInputStream. (ByteArrayInputStream. buf) 1)
             [sink _] (parse-fn rf sink sub-source [:+
-                                                   [::heap-dump-record identifier-size]])]
+                                                   [::heap-dump-record id-type]])]
         [sink source])))
  
   (swap! struct-parsers
@@ -411,19 +414,19 @@
 
 (def-struct-parser
   ::heap-dump-record
-  [identifier-size]
+  [id-type]
   [subrecord-type ::uint8
-   :heap-dump-body [::heap-dump-body identifier-size subrecord-type]])
+   :heap-dump-body [::heap-dump-body id-type subrecord-type]])
 
 (def-struct-parser
   :HPROF_GC_ROOT_UNKNOWN
-  [identifier-size]
-  [:object-id [::identifier identifier-size]])
+  [id-type]
+  [:object-id id-type])
 
 (def-struct-parser
   :HPROF_GC_ROOT_THREAD_OBJ
-  [identifier-size]
-  [:thread-object-id [::identifier identifier-size]
+  [id-type]
+  [:thread-object-id id-type
    :thread-sequence-number ::uint32
    :stacktrace-sequence-number ::uint32])
 
@@ -431,46 +434,46 @@
 
 (def-struct-parser
   :HPROF_GC_ROOT_JNI_GLOBAL ;; JNI global ref root
-  [identifier-size]
-  [:object-id [::identifier identifier-size]
-   :jni-global-ref-id [::identifier identifier-size]])
+  [id-type]
+  [:object-id id-type
+   :jni-global-ref-id id-type])
 
 
 (def-struct-parser
   :HPROF_GC_ROOT_JNI_LOCAL ;; JNI local ref
-  [identifier-size]
-  [:object-id [::identifier identifier-size]
+  [id-type]
+  [:object-id id-type
    :thread-serial-number ::uint32
    :frame-number ::uint32])
 
 (def-struct-parser
   :HPROF_GC_ROOT_JAVA_FRAME ;; Java stack frame
-  [identifier-size]
-  [:object-id [::identifier identifier-size]
+  [id-type]
+  [:object-id id-type
    :thread-serial-number ::uint32
    :frame-number ::uint32])
 
 (def-struct-parser
   :HPROF_GC_ROOT_NATIVE_STACK
-  [identifier-size]
-  [:object-id [::identifier identifier-size]
+  [id-type]
+  [:object-id id-type
    :thread-serial-number ::uint32])
 
 (def-struct-parser
   :HPROF_GC_ROOT_STICKY_CLASS ;; System class
-  [identifier-size]
-  [:object-id [::identifier identifier-size]])
+  [id-type]
+  [:object-id id-type])
 
 (def-struct-parser
   :HPROF_GC_ROOT_THREAD_BLOCK ;; Reference from thread block
-  [identifier-size]
-  [:object-id [::identifier identifier-size]
+  [id-type]
+  [:object-id id-type
    :thread-serial-number ::uint32])
 
 (def-struct-parser
   :HPROF_GC_ROOT_MONITOR_USED ;; Busy monitor
-  [identifier-size]
-  [:object-id [::identifier identifier-size]])
+  [id-type]
+  [:object-id id-type])
 
 
 ;; HPROF_GC_INSTANCE_DUMP        dump of a normal object
@@ -483,10 +486,10 @@
 ;;                       by super, super's super ...)
 (def-struct-parser
   :HPROF_GC_INSTANCE_DUMP ;; dump of a normal object
-  [identifier-size]
-  [:object-id [::identifier identifier-size]
+  [id-type]
+  [:object-id id-type
    :stacktrace-serial-number ::uint32
-   :class-object-id [::identifier identifier-size]
+   :class-object-id id-type
    instance-size ::uint32
    :instance-values [::bytes instance-size]])
 
@@ -499,12 +502,12 @@
 ;;            [id]*      elements
 (def-struct-parser
   :HPROF_GC_OBJ_ARRAY_DUMP ;; dump of an object array
-  [identifier-size]
-  [:object-id [::identifier identifier-size]
+  [id-type]
+  [:object-id id-type
    :stacktrace-serial-number ::uint32
    num-elements ::uint32
-   :array-class-id [::identifier identifier-size]
-   :objects [::n num-elements [::identifier identifier-size]]])
+   :array-class-id id-type
+   :objects [::n num-elements id-type]])
 
 ;; HPROF_GC_PRIM_ARRAY_DUMP      dump of a primitive array
 
@@ -524,21 +527,21 @@
 
 (do
   (defn parse-primitive-array [parse-fn]
-    (fn [rf sink source element-type num-elements identifier-size]
+    (fn [rf sink source element-type num-elements id-type]
       (let [type-name (get field-name element-type)]
-        (parse-fn rf sink source [::n num-elements [type-name identifier-size]]))))
+        (parse-fn rf sink source [::n num-elements [type-name id-type]]))))
   
   (swap! struct-parsers
          assoc ::primitive-array parse-primitive-array))
 
 (def-struct-parser
   :HPROF_GC_PRIM_ARRAY_DUMP ;; dump of a primitive array
-  [identifier-size]
-  [:object-id [::identifier identifier-size]
+  [id-type]
+  [:object-id id-type
    :stacktrace-serial-number ::uint32
    num-elements ::uint32
    element-type ::uint8
-   :arr [::primitive-array element-type num-elements identifier-size]])
+   :arr [::primitive-array element-type num-elements id-type]])
 
 (do
   (defn parse-n [parse-fn]
@@ -560,25 +563,25 @@
 
 (do
   (defn parse-static-field-value [parse-fn]
-    (fn [rf sink source identifier-size field-type]
+    (fn [rf sink source id-type field-type]
       (let [type-name (get field-name field-type)]
         (assert type-name (str "Unknown field type: " field-type))
-        (parse-fn rf sink source [type-name identifier-size]))))
+        (parse-fn rf sink source [type-name id-type]))))
   
   (swap! struct-parsers
          assoc ::static-field-value parse-static-field-value))
 
 (def-struct-parser :HPROF_ARRAY_OBJECT
-  [identifier-size]
-  [:object-id [::identifier identifier-size]])
+  [id-type]
+  [:object-id id-type])
 
 (def-struct-parser :HPROF_NORMAL_OBJECT
-  [identifier-size]
-  [:object-id [::identifier identifier-size]])
+  [id-type]
+  [:object-id id-type])
 
 (do
   (defn parse-field-value-bool [parse-fn]
-    (fn [rf sink source identifier-size]
+    (fn [rf sink source id-type]
       (let [[bool source] (parse-fn #(do %2) nil source ::uint8)
             sink (rf sink (zero? bool))]
         [sink source])))
@@ -589,7 +592,7 @@
 
 (do
   (defn parse-field-value-char [parse-fn]
-    (fn [rf sink source identifier-size]
+    (fn [rf sink source id-type]
       (let [[c source] (parse-fn #(do %2) nil source ::uint16)
             sink (rf sink (char c))]
         [sink source])))
@@ -599,58 +602,58 @@
 
 
 (def-struct-parser :HPROF_FLOAT
-  [identifier-size]
+  [id-type]
   [:float-value ::float32])
 (def-struct-parser :HPROF_DOUBLE
-  [identifier-size]
+  [id-type]
   [:float-value ::float64])
 
 (def-struct-parser :HPROF_BYTE
-  [identifier-size]
+  [id-type]
   [:byte-value ::int8])
 (def-struct-parser :HPROF_SHORT
-  [identifier-size]
+  [id-type]
   [:short-value ::int16])
 (def-struct-parser :HPROF_INT
-  [identifier-size]
+  [id-type]
   [:int-value ::int32])
 (def-struct-parser :HPROF_LONG
-  [identifier-size]
+  [id-type]
   [:long-value ::int64])
 
 (def-struct-parser
   ::static-field
-  [identifier-size]
-  [:static-field-name [::identifier identifier-size]
+  [id-type]
+  [:static-field-name id-type
    static-field-type ::uint8
-   :static-field-value [::static-field-value identifier-size static-field-type]])
+   :static-field-value [::static-field-value id-type static-field-type]])
 
 (def-struct-parser
   ::instance-field
-  [identifier-size]
-  [:instance-field-name [::identifier identifier-size]
+  [id-type]
+  [:instance-field-name id-type
    :instance-field-type ::uint8])
 
 (def-struct-parser
   :HPROF_GC_CLASS_DUMP
-  [identifier-size]
+  [id-type]
   [
    ;; id         class object ID
-   :class-object-id [::identifier identifier-size]
+   :class-object-id id-type
    ;; u4         stack trace serial number
    :stacktrace-serial-number ::uint32
    ;; id         super class object ID
-   :super-class-object-id [::identifier identifier-size]
+   :super-class-object-id id-type
    ;; id         class loader object ID
-   :loader-object-id [::identifier identifier-size]
+   :loader-object-id id-type
    ;; id         signers object ID
-   :signers-object-id [::identifier identifier-size]
+   :signers-object-id id-type
    ;; id         protection domain object ID
-   :protection-domain-object-id [::identifier identifier-size]
+   :protection-domain-object-id id-type
    ;; id         reserved
-   :reserved [::identifier identifier-size]
+   :reserved id-type
    ;; id         reserved
-   :reserved [::identifier identifier-size]
+   :reserved id-type
 
    ;; u4         instance size (in bytes)
    :instance-bytes-size ::uint32
@@ -672,7 +675,7 @@
    #_constant-pool-is-always-0
 
    static-field-count ::uint16
-   :static-fields [::n static-field-count [::static-field identifier-size]]
+   :static-fields [::n static-field-count [::static-field id-type]]
    ;; u2         number of static fields
    ;; [id,       static field name,
    ;;  ty,       type,
@@ -682,14 +685,14 @@
    instance-field-count ::uint16
    ;; [id,       instance field name,
    ;;  ty]*      type
-   :instance-fields [::n instance-field-count [::instance-field identifier-size]]])
+   :instance-fields [::n instance-field-count [::instance-field id-type]]])
 
 (do
   (defn parse-heap-dump-body [parse-fn]
-    (fn [rf sink source identifier-size subrecord-type]
+    (fn [rf sink source id-type subrecord-type]
       (let [type-name (get heap-dump-tag-name subrecord-type)]
         (assert type-name (str "Unknown heap dump subrecord type: " subrecord-type))
-        (parse-fn rf sink source [type-name identifier-size]))))
+        (parse-fn rf sink source [type-name id-type]))))
   
   (swap! struct-parsers
          assoc ::heap-dump-body parse-heap-dump-body))
@@ -711,8 +714,11 @@
 
 
 (defn parse-tag-string [parse-fn]
-  (fn [rf sink source identifier-size remaining-bytes]
-    (let [[bytes source] (parse-fn #(do %2) nil source [::bytes (- remaining-bytes identifier-size)])]
+  (fn [rf sink source id-type remaining-bytes]
+    (let [[bytes source] (parse-fn #(do %2) nil source [::bytes (- remaining-bytes
+                                                                   (case id-type
+                                                                     ::int32 4
+                                                                     ::int64 8))])]
       [(rf sink (String. bytes "utf-8")) source])))
 
 
@@ -721,20 +727,20 @@
 
 (def-struct-parser
   ::HPROF_UTF8
-  [identifier-size remaining-bytes]
-  [:id [::identifier identifier-size]
-   :str [::tag-string identifier-size remaining-bytes]])
+  [id-type remaining-bytes]
+  [:id id-type
+   :str [::tag-string id-type remaining-bytes]])
 
 (defn parse-record-body [parse-fn]
-  (fn [rf sink source identifier-size tag remaining-bytes]
+  (fn [rf sink source id-type tag remaining-bytes]
     (let [type (get tag-name tag)]
-     (parse-fn rf sink source [type identifier-size remaining-bytes]))
+     (parse-fn rf sink source [type id-type remaining-bytes]))
     #_(case 
       ::HPROF_UTF8
-      (parse-fn rf sink source [::HPROF_UTF8 identifier-size remaining-bytes])
+      (parse-fn rf sink source [::HPROF_UTF8 id-type remaining-bytes])
 
       ::HPROF_HEAP_DUMP_SEGMENT
-      (parse-fn rf sink source [::HPROF_HEAP_DUMP_SEGMENT identifier-size remaining-bytes])
+      (parse-fn rf sink source [::HPROF_HEAP_DUMP_SEGMENT id-type remaining-bytes])
       
       ;; else
       
@@ -744,15 +750,15 @@
 (swap! struct-parsers
        assoc ::record-body parse-record-body)
 
-(defn parse-identifier [parse-fn]
-  (fn [rf sink source identifier-size]
-    (case identifier-size
-      4 (parse-fn rf sink source ::uint32)
-      8 (parse-fn rf sink source ::int64))))
+;; (defn parse-identifier [parse-fn]
+;;   (fn [rf sink source identifier-size]
+;;     (case identifier-size
+;;       4 (parse-fn rf sink source ::uint32)
+;;       8 (parse-fn rf sink source ::int64))))
 
 
-(swap! struct-parsers
-       assoc ::identifier parse-identifier)
+;; (swap! struct-parsers
+;;        assoc ::identifier parse-identifier)
 
 
 
@@ -1106,23 +1112,18 @@
              result)
            ))))))
 
-(let [xform
-      (comp (find-key :instance-field-name))]
-  (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
+(comment
+ (let [xform
+       (comp (find-key :instance-field-name))]
+   (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
 
-(let [xform
-      (comp (find-key :super-class-object-id))]
-  (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
+ (let [xform
+       (comp (find-key :super-class-object-id))]
+   (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
+ ,
+ )
 
-(defn ->string-map [fname]
-  (let [xform
-        (comp (find-struct ::HPROF_UTF8))
-        tags (parse! xform conj []  fname ::hprof)
-        strs (collect/hydrate (reduce collect/hydrate (collect/hydrate nil ::collect/start-vec) tags) ::collect/end)]
-    (into {}
-          (map (fn [{:keys [id str]}]
-                 [id str]))
-          strs)))
+
 
 
 
@@ -1145,25 +1146,38 @@
       :else
       (collect/append z token))))
 
-(defn ->classes? [fname]
+(defn ->string-map [fname]
   (let [xform
-        (comp (find-struct ::HPROF_LOAD_CLASS))
+        (comp (find-struct ::HPROF_UTF8))
         tags (parse! xform conj []  fname ::hprof)
-        result (hydrate (reduce hydrate (hydrate nil ::start-vec) tags) ::end)]
+        strs (hydrate (reduce hydrate (hydrate nil ::start-vec) tags) ::end)]
     (into {}
-          (map (fn [{:keys [object-id class-name-id]}]
-                 [object-id (get my-str-map class-name-id)]))
-          result)))
+          (map (fn [{:keys [id str]}]
+                 [id str]))
+          strs)))
 
-(def kls (->classes? "mem.hprof"))
+(comment
 
-(def my-str-map (->string-map "mem.hprof") )
+  (defn ->classes? [fname]
+    (let [xform
+          (comp (find-struct ::HPROF_LOAD_CLASS))
+          tags (parse! xform conj []  fname ::hprof)
+          result (hydrate (reduce hydrate (hydrate nil ::start-vec) tags) ::end)]
+      (into {}
+            (map (fn [{:keys [object-id class-name-id]}]
+                   [object-id (get my-str-map class-name-id)]))
+            result)))
 
-(def class-object-ids (parse! (find-key :class-object-id) conj [] "mem.hprof" ::hprof))
-(def class-names (map my-str-map class-object-ids))
+  (def kls (->classes? "mem.hprof"))
 
-(->> (clojure.reflect/reflect Class)
-     :members
-     (filter #(instance? clojure.reflect.Field %))
-     (map :name)
-     )
+  (def my-str-map (->string-map "mem.hprof") )
+
+  (def class-object-ids (parse! (find-key :class-object-id) conj [] "mem.hprof" ::hprof))
+  (def class-names (map my-str-map class-object-ids))
+
+  (->> (clojure.reflect/reflect Class)
+       :members
+       (filter #(instance? clojure.reflect.Field %))
+       (map :name)
+       )
+  )
