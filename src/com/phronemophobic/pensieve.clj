@@ -271,7 +271,7 @@
                               [sink## source##] `(~parse-fn## ~rf## ~sink## ~source## ~type)])))
                         (partition-all 2)
                         #_(interpose [(gensym "__") `(when (reduced? ~sink##)
-                                                     (throw (Exception. "Reduced!")))])
+                                                       (throw (Exception. "Reduced!")))])
                         cat)
                        
                        fields)]
@@ -323,7 +323,7 @@
 (defn parse-record-body [parse-fn]
   (fn [rf sink source id-type tag remaining-bytes]
     (let [type (get tag-name tag)]
-     (parse-fn rf sink source [type id-type remaining-bytes]))))
+      (parse-fn rf sink source [type id-type remaining-bytes]))))
 
 
 (swap! struct-parsers
@@ -698,7 +698,7 @@
                                                    [::heap-dump-record id-type]])
             sink (rf sink [:end ::HPROF_HEAP_DUMP_SEGMENT])]
         [sink source])))
- 
+  
   (swap! struct-parsers
          assoc ::HPROF_HEAP_DUMP_SEGMENT parse-heap-dump-segment))
 
@@ -837,14 +837,16 @@
 
 (defn parse-one-or-more [parse-fn]
   (fn [rf sink source type]
-    (loop [[sink source] [sink source]]
-      (let [[eof? source] (parse-fn #(do %2) nil source ::eof?)]
-        (if eof? 
-          [sink source]
-          (let [[sink source :as result] (parse-fn rf sink source type)]
-            (if (reduced? sink)
-              result
-              (recur result))))))))
+    (let [sink (rf sink ::start-vec)]
+      (loop [[sink source] [sink source]]
+        (let [[eof? source] (parse-fn #(do %2) nil source ::eof?)]
+          (if eof?
+            (let [sink (rf sink ::end)]
+              [sink source])
+            (let [[sink source :as result] (parse-fn rf sink source type)]
+              (if (reduced? sink)
+                result
+                (recur result)))))))))
 
 (swap! struct-parsers
        assoc :+ parse-one-or-more)
@@ -1229,15 +1231,15 @@
            ))))))
 
 (comment
- (let [xform
-       (comp (find-key :instance-field-name))]
-   (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
+  (let [xform
+        (comp (find-key :instance-field-name))]
+    (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
 
- (let [xform
-       (comp (find-key :super-class-object-id))]
-   (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
- ,
- )
+  (let [xform
+        (comp (find-key :super-class-object-id))]
+    (def tags (parse! xform conj []  "mem.hprof" ::hprof)))
+  ,
+  )
 
 
 
