@@ -17,21 +17,21 @@
 ;; https://hg.openjdk.org/jdk/jdk/file/9a73a4e4011f/src/hotspot/share/services/heapDumper.cpp
 (def record-tags
   { ;; // top-level records
-   ::HPROF_UTF8                     0x01
-   ::HPROF_LOAD_CLASS               0x02
-   ::HPROF_UNLOAD_CLASS             0x03
-   ::HPROF_FRAME                    0x04
-   ::HPROF_TRACE                    0x05
-   ::HPROF_ALLOC_SITES              0x06
-   ::HPROF_HEAP_SUMMARY             0x07
-   ::HPROF_START_THREAD             0x0A
-   ::HPROF_END_THREAD               0x0B
-   ::HPROF_HEAP_DUMP                0x0C
-   ::HPROF_CPU_SAMPLES              0x0D
-   ::HPROF_CONTROL_SETTINGS         0x0E
+   :HPROF_UTF8                     0x01
+   :HPROF_LOAD_CLASS               0x02
+   :HPROF_UNLOAD_CLASS             0x03
+   :HPROF_FRAME                    0x04
+   :HPROF_TRACE                    0x05
+   :HPROF_ALLOC_SITES              0x06
+   :HPROF_HEAP_SUMMARY             0x07
+   :HPROF_START_THREAD             0x0A
+   :HPROF_END_THREAD               0x0B
+   :HPROF_HEAP_DUMP                0x0C
+   :HPROF_CPU_SAMPLES              0x0D
+   :HPROF_CONTROL_SETTINGS         0x0E
    ;; // 1.0.2 record types
-   ::HPROF_HEAP_DUMP_SEGMENT        0x1C
-   ::HPROF_HEAP_DUMP_END            0x2C
+   :HPROF_HEAP_DUMP_SEGMENT        0x1C
+   :HPROF_HEAP_DUMP_END            0x2C
    ;; // field types
 
 
@@ -335,7 +335,7 @@
 ;; *               id         name ID
 ;; *               [u1]*      UTF8 characters (no trailing zero)
 (def-struct-parser
-  ::HPROF_UTF8
+  :HPROF_UTF8
   [id-type remaining-bytes]
   [:id id-type
    :str [::tag-string id-type remaining-bytes]])
@@ -347,7 +347,7 @@
 ;; *                u4        stack trace serial number
 ;; *                id        class name ID
 (def-struct-parser
-  ::HPROF_LOAD_CLASS ;; a newly loaded class
+  :HPROF_LOAD_CLASS ;; a newly loaded class
   [id-type remaining-size]
   [:class-serial-number ::uint32
    :object-id id-type
@@ -360,7 +360,7 @@
 ;; *
 ;; *                u4        class serial_number
 (def-struct-parser
-  ::HPROF_UNLOAD_CLASS ;; an unloading class
+  :HPROF_UNLOAD_CLASS ;; an unloading class
   [id-type remaining-size]
   [:class-serial-number ::uint32])
 
@@ -376,7 +376,7 @@
 ;; *                                       -2: compiled method
 ;; *                                       -3: native method
 (def-struct-parser
-  ::HPROF_FRAME ;; a Java stack trace
+  :HPROF_FRAME ;; a Java stack trace
   [id-type remaining-size]
   [:stack-frame-id id-type
    :method-name-id id-type
@@ -393,7 +393,7 @@
 ;; *               u4         number of frames
 ;; *               [id]*      stack frame IDs
 (def-struct-parser
-  ::HPROF_TRACE ;; a Java stack trace
+  :HPROF_TRACE ;; a Java stack trace
   [id-type remaining-size]
   [:stacktrace-serial-number ::uint32
    :thread-serial-number ::uint32
@@ -428,7 +428,7 @@
 ;; *                u4        number of bytes allocated
 ;; *                u4]*      number of instance allocated
 (def-struct-parser
-  ::HPROF_ALLOC_SITES ;; a set of heap allocation sites, obtained after GC
+  :HPROF_ALLOC_SITES ;; a set of heap allocation sites, obtained after GC
   [id-type remaining-size]
   [:flags ::uint16
    :cutoff-ratio ::uint32
@@ -457,7 +457,7 @@
 ;; *               id         thread group name ID
 ;; *               id         thread group parent name ID
 (def-struct-parser
-  ::HPROF_START_THREAD ;; a newly started thread.
+  :HPROF_START_THREAD ;; a newly started thread.
   [id-type remaining-size]
   [:thread-serial-number ::uint32
    :thread-object-id id-type
@@ -470,7 +470,7 @@
 ;; *
 ;; *               u4         thread serial number
 (def-struct-parser
-  ::HPROF_END_THREAD ;; a terminating thread.
+  :HPROF_END_THREAD ;; a terminating thread.
   [id-type remaining-size]
   [:thread-serial-number ::uint32])
 
@@ -481,7 +481,7 @@
 ;; *               u8         total bytes allocated
 ;; *               u8         total instances allocated
 (def-struct-parser
-  ::HPROF_HEAP_SUMMARY ;; heap summary
+  :HPROF_HEAP_SUMMARY ;; heap summary
   [id-type remaining-size]
   [:total-live-bytes ::uint32
    :total-live-instances ::uint32
@@ -692,15 +692,15 @@
     (fn [rf sink source id-type remaining-bytes]
       (let [[buf source] (parse-fn #(do %2) nil source [::bytes remaining-bytes])
             sub-source (PushbackInputStream. (ByteArrayInputStream. buf) 1)
-            sink (rf sink [:begin ::HPROF_HEAP_DUMP_SEGMENT])
+            sink (rf sink [:begin :HPROF_HEAP_DUMP_SEGMENT])
             sink (rf sink :records)
             [sink _] (parse-fn rf sink sub-source [:+
                                                    [::heap-dump-record id-type]])
-            sink (rf sink [:end ::HPROF_HEAP_DUMP_SEGMENT])]
+            sink (rf sink [:end :HPROF_HEAP_DUMP_SEGMENT])]
         [sink source])))
   
   (swap! struct-parsers
-         assoc ::HPROF_HEAP_DUMP_SEGMENT parse-heap-dump-segment))
+         assoc :HPROF_HEAP_DUMP_SEGMENT parse-heap-dump-segment))
 
 
 (def-struct-parser
@@ -710,7 +710,7 @@
    :heap-dump-body [::heap-dump-body id-type subrecord-type]])
 
 (def-struct-parser
-  ::HPROF_HEAP_DUMP_END ;; a Java stack trace
+  :HPROF_HEAP_DUMP_END ;; a Java stack trace
   [id-type remaining-size]
   [])
 
@@ -1269,7 +1269,7 @@
 
 (defn ->string-map [fname]
   (let [xform
-        (comp (find-struct ::HPROF_UTF8))
+        (comp (find-struct :HPROF_UTF8))
         tags (parse! xform conj [] fname)
         strs (hydrate (reduce hydrate (hydrate nil ::start-vec) tags) ::end)]
     (into {}
@@ -1286,7 +1286,7 @@
 
   (defn ->classes? [fname]
     (let [xform
-          (comp (find-struct ::HPROF_LOAD_CLASS))
+          (comp (find-struct :HPROF_LOAD_CLASS))
           tags (parse! xform conj []  fname ::hprof)
           result (hydrate (reduce hydrate (hydrate nil ::start-vec) tags) ::end)]
       (into {}
