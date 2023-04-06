@@ -6,6 +6,7 @@
   (:import (com.sun.management GarbageCollectionNotificationInfo GcInfo HotSpotDiagnosticMXBean)
            (java.lang.management ManagementFactory)
            java.io.ByteArrayInputStream
+           java.math.BigInteger
            java.io.PushbackInputStream
            java.io.InputStream
            java.util.Date))
@@ -95,6 +96,15 @@
            ~@body)
       :k k#}))
 
+(defn read-bytes [is n]
+  (let [buf (byte-array n)]
+    (loop [offset 0]
+      (if (< offset n)
+        (let [bytes-read (.read ^InputStream is buf offset (- n offset))]
+          (assert (pos? bytes-read))
+          (recur (+ offset bytes-read)))
+        [is buf]))))
+
 (def inputstream-readers
   (into
    {}
@@ -181,6 +191,11 @@
                   (- num))]
         [is num]))
 
+    (rfn ::uint64 [is]
+      (let [[is magnitude] (read-bytes is 8)]
+        [is
+         (BigInteger. 1 ;; positive
+                      magnitude)]))
 
     (rfn ::int64 [is]
       (let [a (.read ^InputStream is)
@@ -233,13 +248,7 @@
               (recur (conj bs b)))))))
 
     (rfn ::bytes [is n]
-      (let [buf (byte-array n)]
-        (loop [offset 0]
-          (if (< offset n)
-            (let [bytes-read (.read ^InputStream is buf offset (- n offset))]
-              (assert (pos? bytes-read))
-              (recur (+ offset bytes-read)))
-            [is buf]))))]))
+      (read-bytes is n))]))
 
 
 (defn struct-parser* [name args fields]
@@ -311,6 +320,25 @@
    remaining-bytes ::uint32
    :body [::record-body id-type tag remaining-bytes]])
 
+(defn parse-record-body [parse-fn]
+  (fn [rf sink source id-type tag remaining-bytes]
+    (let [type (get tag-name tag)]
+     (parse-fn rf sink source [type id-type remaining-bytes]))))
+
+
+(swap! struct-parsers
+       assoc ::record-body parse-record-body)
+
+
+;; * HPROF_UTF8               a UTF8-encoded name
+;; *
+;; *               id         name ID
+;; *               [u1]*      UTF8 characters (no trailing zero)
+(def-struct-parser
+  ::HPROF_UTF8
+  [id-type remaining-bytes]
+  [:id id-type
+   :str [::tag-string id-type remaining-bytes]])
 
 ;; * HPROF_LOAD_CLASS         a newly loaded class
 ;; *
@@ -327,20 +355,14 @@
    :class-name-id id-type])
 
 
-;; * HPROF_TRACE              a Java stack trace
-;; *
-;; *               u4         stack trace serial number
-;; *               u4         thread serial number
-;; *               u4         number of frames
-;; *               [id]*      stack frame IDs
-(def-struct-parser
-  ::HPROF_TRACE ;; a Java stack trace
-  [id-type remaining-size]
-  [:stacktrace-serial-number ::uint32
-   :thread-serial-number ::uint32
-   num-frames ::uint32
-   :frame-ids [::n num-frames id-type]])
 
+;; * HPROF_UNLOAD_CLASS       an unloading class
+;; *
+;; *                u4        class serial_number
+(def-struct-parser
+  ::HPROF_UNLOAD_CLASS ;; an unloading class
+  [id-type remaining-size]
+  [:class-serial-number ::uint32])
 
 ;; * HPROF_FRAME              a Java stack frame
 ;; *
@@ -363,48 +385,109 @@
    :serial-number ::uint32
    :line-number ::int32])
 
+
+;; * HPROF_TRACE              a Java stack trace
+;; *
+;; *               u4         stack trace serial number
+;; *               u4         thread serial number
+;; *               u4         number of frames
+;; *               [id]*      stack frame IDs
 (def-struct-parser
-  ::HPROF_HEAP_DUMP_END ;; a Java stack trace
+  ::HPROF_TRACE ;; a Java stack trace
   [id-type remaining-size]
-  [])
+  [:stacktrace-serial-number ::uint32
+   :thread-serial-number ::uint32
+   num-frames ::uint32
+   :frame-ids [::n num-frames id-type]])
 
-(do
-  ;; helper for debugging
-  (defn parse-rest [parse-fn]
-    (fn [rf sink source]
-      (loop [n 0]
-        (let [[byte source] (parse-fn #(do %2) nil source ::uint8)]
-          (if (= -1 byte)
-            (do (prn n)
-                [sink source])
-            (recur (inc n)))))))
-  
-  (swap! struct-parsers
-         assoc ::parse-rest parse-rest))
-
-#_(def-struct-parser
-  ::HPROF_HEAP_DUMP_SEGMENT
-  [id-type remaining-size]
-  [:subrecords [:+ [::heap-dump-record id-type]]])
-
-(do
-  (defn parse-heap-dump-segment [parse-fn]
-    (fn [rf sink source id-type remaining-bytes]
-      (let [[buf source] (parse-fn #(do %2) nil source [::bytes remaining-bytes])
-            sub-source (PushbackInputStream. (ByteArrayInputStream. buf) 1)
-            [sink _] (parse-fn rf sink sub-source [:+
-                                                   [::heap-dump-record id-type]])]
-        [sink source])))
- 
-  (swap! struct-parsers
-         assoc ::HPROF_HEAP_DUMP_SEGMENT parse-heap-dump-segment))
-
-
+;; * HPROF_ALLOC_SITES        a set of heap allocation sites, obtained after GC
+;; *
+;; *               u2         flags 0x0001: incremental vs. complete
+;; *                                0x0002: sorted by allocation vs. live
+;; *                                0x0004: whether to force a GC
+;; *               u4         cutoff ratio
+;; *               u4         total live bytes
+;; *               u4         total live instances
+;; *               u8         total bytes allocated
+;; *               u8         total instances allocated
+;; *               u4         number of sites that follow
+;; *               [u1        is_array: 0:  normal object
+;; *                                    2:  object array
+;; *                                    4:  boolean array
+;; *                                    5:  char array
+;; *                                    6:  float array
+;; *                                    7:  double array
+;; *                                    8:  byte array
+;; *                                    9:  short array
+;; *                                    10: int array
+;; *                                    11: long array
+;; *                u4        class serial number (may be zero during startup)
+;; *                u4        stack trace serial number
+;; *                u4        number of bytes alive
+;; *                u4        number of instances alive
+;; *                u4        number of bytes allocated
+;; *                u4]*      number of instance allocated
 (def-struct-parser
-  ::heap-dump-record
-  [id-type]
-  [subrecord-type ::uint8
-   :heap-dump-body [::heap-dump-body id-type subrecord-type]])
+  ::HPROF_ALLOC_SITES ;; a set of heap allocation sites, obtained after GC
+  [id-type remaining-size]
+  [:flags ::uint16
+   :cutoff-ratio ::uint32
+   :total-live-bytes ::uint32         
+   :total-live-instances ::uint32
+   :total-bytes-allocated ::uint64
+   :total-instances-allocated ::uint64
+   num-sites ::uint32
+   
+   :sites
+   [::n num-sites
+    [:is-array ::uint8
+     :class-serial-number ::uint32
+     :stacktrace-serial-number ::uint32
+     :number-of-bytes-alive ::uint32
+     :number-of-instances-alive ::uint32
+     :number-of-bytes-allocated ::uint32
+     :number-of-instances-allocated ::uint32]]])
+
+;; * HPROF_START_THREAD       a newly started thread.
+;; *
+;; *               u4         thread serial number (> 0)
+;; *               id         thread object ID
+;; *               u4         stack trace serial number
+;; *               id         thread name ID
+;; *               id         thread group name ID
+;; *               id         thread group parent name ID
+(def-struct-parser
+  ::HPROF_START_THREAD ;; a newly started thread.
+  [id-type remaining-size]
+  [:thread-serial-number ::uint32
+   :thread-object-id id-type
+   :stacktrace-serial-number ::uint32
+   :thread-name-id id-type
+   :thread-group-name-id id-type
+   :thread-group-parent-name-id id-type])
+
+;; * HPROF_END_THREAD         a terminating thread.
+;; *
+;; *               u4         thread serial number
+(def-struct-parser
+  ::HPROF_END_THREAD ;; a terminating thread.
+  [id-type remaining-size]
+  [:thread-serial-number ::uint32])
+
+;; * HPROF_HEAP_SUMMARY       heap summary
+;; *
+;; *               u4         total live bytes
+;; *               u4         total live instances
+;; *               u8         total bytes allocated
+;; *               u8         total instances allocated
+(def-struct-parser
+  ::HPROF_HEAP_SUMMARY ;; heap summary
+  [id-type remaining-size]
+  [:total-live-bytes ::uint32
+   :total-live-instances ::uint32
+   :total-bytes-allocated ::uint64
+   :total-instances-allocated ::uint64])
+
 
 (def-struct-parser
   :HPROF_GC_ROOT_UNKNOWN
@@ -462,6 +545,61 @@
   :HPROF_GC_ROOT_MONITOR_USED ;; Busy monitor
   [id-type]
   [:object-id id-type])
+
+(def-struct-parser
+  :HPROF_GC_CLASS_DUMP
+  [id-type]
+  [
+   ;; id         class object ID
+   :class-object-id id-type
+   ;; u4         stack trace serial number
+   :stacktrace-serial-number ::uint32
+   ;; id         super class object ID
+   :super-class-object-id id-type
+   ;; id         class loader object ID
+   :loader-object-id id-type
+   ;; id         signers object ID
+   :signers-object-id id-type
+   ;; id         protection domain object ID
+   :protection-domain-object-id id-type
+   ;; id         reserved
+   :reserved id-type
+   ;; id         reserved
+   :reserved id-type
+
+   ;; u4         instance size (in bytes)
+   :instance-bytes-size ::uint32
+
+   ;; u2         size of constant pool
+   constant-pool-size ::uint16
+   ;; AFAIK, constant-pool-size is always 0
+   :constant-pool [::n constant-pool-size ::constant-pool-item]
+   ;; [u2,       constant pool index,
+   ;;  ty,       type
+   ;;            2:  object
+   ;;            4:  boolean
+   ;;            5:  char
+   ;;            6:  float
+   ;;            7:  double
+   ;;            8:  byte
+   ;;            9:  short
+   ;;            10: int
+   ;;            11: long
+   ;;  vl]*      and value
+
+
+   static-field-count ::uint16
+   :static-fields [::n static-field-count [::static-field id-type]]
+   ;; u2         number of static fields
+   ;; [id,       static field name,
+   ;;  ty,       type,
+   ;;  vl]*      and value
+
+   ;; u2         number of inst. fields (not inc. super)
+   instance-field-count ::uint16
+   ;; [id,       instance field name,
+   ;;  ty]*      type
+   :instance-fields [::n instance-field-count [::instance-field id-type]]])
 
 
 ;; HPROF_GC_INSTANCE_DUMP        dump of a normal object
@@ -530,6 +668,65 @@
    num-elements ::uint32
    element-type ::uint8
    :arr [::primitive-array element-type num-elements id-type]])
+
+
+
+
+;; * HPROF_CPU_SAMPLES        a set of sample traces of running threads
+;; *
+;; *                u4        total number of samples
+;; *                u4        # of traces
+;; *               [u4        # of samples
+;; *                u4]*      stack trace serial number
+#_unused?
+
+;; * HPROF_CONTROL_SETTINGS   the settings of on/off switches
+;; *
+;; *                u4        0x00000001: alloc traces on/off
+;; *                          0x00000002: cpu sampling on/off
+;; *                u2        stack trace depth
+#_unused?
+
+(do
+  (defn parse-heap-dump-segment [parse-fn]
+    (fn [rf sink source id-type remaining-bytes]
+      (let [[buf source] (parse-fn #(do %2) nil source [::bytes remaining-bytes])
+            sub-source (PushbackInputStream. (ByteArrayInputStream. buf) 1)
+            [sink _] (parse-fn rf sink sub-source [:+
+                                                   [::heap-dump-record id-type]])]
+        [sink source])))
+ 
+  (swap! struct-parsers
+         assoc ::HPROF_HEAP_DUMP_SEGMENT parse-heap-dump-segment))
+
+
+(def-struct-parser
+  ::heap-dump-record
+  [id-type]
+  [subrecord-type ::uint8
+   :heap-dump-body [::heap-dump-body id-type subrecord-type]])
+
+(def-struct-parser
+  ::HPROF_HEAP_DUMP_END ;; a Java stack trace
+  [id-type remaining-size]
+  [])
+
+(do
+  ;; helper for debugging
+  (defn parse-rest [parse-fn]
+    (fn [rf sink source]
+      (loop [n 0]
+        (let [[byte source] (parse-fn #(do %2) nil source ::uint8)]
+          (if (= -1 byte)
+            (do (prn n)
+                [sink source])
+            (recur (inc n)))))))
+  
+  (swap! struct-parsers
+         assoc ::parse-rest parse-rest))
+
+
+
 
 (do
   (defn parse-n [parse-fn]
@@ -622,58 +819,7 @@
   [:instance-field-name id-type
    :instance-field-type ::uint8])
 
-(def-struct-parser
-  :HPROF_GC_CLASS_DUMP
-  [id-type]
-  [
-   ;; id         class object ID
-   :class-object-id id-type
-   ;; u4         stack trace serial number
-   :stacktrace-serial-number ::uint32
-   ;; id         super class object ID
-   :super-class-object-id id-type
-   ;; id         class loader object ID
-   :loader-object-id id-type
-   ;; id         signers object ID
-   :signers-object-id id-type
-   ;; id         protection domain object ID
-   :protection-domain-object-id id-type
-   ;; id         reserved
-   :reserved id-type
-   ;; id         reserved
-   :reserved id-type
 
-   ;; u4         instance size (in bytes)
-   :instance-bytes-size ::uint32
-
-   ;; u2         size of constant pool
-   :constant-pool-size ::uint16
-   ;; [u2,       constant pool index,
-   ;;  ty,       type
-   ;;            2:  object
-   ;;            4:  boolean
-   ;;            5:  char
-   ;;            6:  float
-   ;;            7:  double
-   ;;            8:  byte
-   ;;            9:  short
-   ;;            10: int
-   ;;            11: long
-   ;;  vl]*      and value
-   #_constant-pool-is-always-0
-
-   static-field-count ::uint16
-   :static-fields [::n static-field-count [::static-field id-type]]
-   ;; u2         number of static fields
-   ;; [id,       static field name,
-   ;;  ty,       type,
-   ;;  vl]*      and value
-
-   ;; u2         number of inst. fields (not inc. super)
-   instance-field-count ::uint16
-   ;; [id,       instance field name,
-   ;;  ty]*      type
-   :instance-fields [::n instance-field-count [::instance-field id-type]]])
 
 (do
   (defn parse-heap-dump-body [parse-fn]
@@ -713,30 +859,9 @@
 (swap! struct-parsers
        assoc ::tag-string parse-tag-string)
 
-(def-struct-parser
-  ::HPROF_UTF8
-  [id-type remaining-bytes]
-  [:id id-type
-   :str [::tag-string id-type remaining-bytes]])
-
-(defn parse-record-body [parse-fn]
-  (fn [rf sink source id-type tag remaining-bytes]
-    (let [type (get tag-name tag)]
-     (parse-fn rf sink source [type id-type remaining-bytes]))
-    #_(case 
-      ::HPROF_UTF8
-      (parse-fn rf sink source [::HPROF_UTF8 id-type remaining-bytes])
-
-      ::HPROF_HEAP_DUMP_SEGMENT
-      (parse-fn rf sink source [::HPROF_HEAP_DUMP_SEGMENT id-type remaining-bytes])
-      
-      ;; else
-      
-      #_(parse-fn rf sink source [::bytes remaining-bytes]))))
 
 
-(swap! struct-parsers
-       assoc ::record-body parse-record-body)
+
 
 ;; (defn parse-identifier [parse-fn]
 ;;   (fn [rf sink source identifier-size]
