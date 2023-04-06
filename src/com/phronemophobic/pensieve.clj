@@ -692,8 +692,11 @@
     (fn [rf sink source id-type remaining-bytes]
       (let [[buf source] (parse-fn #(do %2) nil source [::bytes remaining-bytes])
             sub-source (PushbackInputStream. (ByteArrayInputStream. buf) 1)
+            sink (rf sink [:begin ::HPROF_HEAP_DUMP_SEGMENT])
+            sink (rf sink :records)
             [sink _] (parse-fn rf sink sub-source [:+
-                                                   [::heap-dump-record id-type]])]
+                                                   [::heap-dump-record id-type]])
+            sink (rf sink [:end ::HPROF_HEAP_DUMP_SEGMENT])]
         [sink source])))
  
   (swap! struct-parsers
