@@ -1012,44 +1012,9 @@
     (assoc info
            :instances instances)))
 (comment
-  (require '[loom.alg :as alg])
-  
-  (alg/bf-traverse successors (rand-instance))
+
 
   (def info (hprof-info "mem.hprof"))
-
-  (def instances (->> (:instances info)
-                      ;; vals
-                      ;; (map #(hydrate-instance info %))
-
-                      ))
-
-  ()
-
-  (def clojure-instances
-    (->> instances
-         (filter #(clojure.string/starts-with? (:class %) "clojure/"))
-         (remove #(clojure.string/includes? (:class %) "$"))))
-
-  (def freqs (->> instances
-                  (map :class)
-                  frequencies
-                  (sort-by second)
-                  reverse))
-
-  (def freqs (->> instances
-                  (map :class)
-                  (map (fn [s]
-                         (first (clojure.string/split s #"/" 2))))
-                  frequencies))
-  
-  (->> instances
-       (map :data)
-       (mapcat vals)
-       (filter map?)
-       )
-
-  
 
   (defn rand-instance []
     (->> info
