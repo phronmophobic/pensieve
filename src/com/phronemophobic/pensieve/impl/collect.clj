@@ -1,4 +1,4 @@
-(ns com.phronemophobic.pensieve.collect)
+(ns com.phronemophobic.pensieve.impl.collect)
 
 (defn append [[rf result p :as z] x]
   [rf
