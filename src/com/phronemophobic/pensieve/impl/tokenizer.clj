@@ -1,5 +1,5 @@
 (ns com.phronemophobic.pensieve.impl.tokenizer
-  (:require [com.phronemophobic.pensieve.collect :as collect]
+  (:require [com.phronemophobic.pensieve.impl.collect :as collect]
             [clojure.java.io :as io])
   (:import java.io.ByteArrayInputStream
            java.math.BigInteger

@@ -1,6 +1,5 @@
 (ns com.phronemophobic.pensieve.impl.hprof
-  (:require [com.phronemophobic.pensieve.collect :as collect]
-            [com.phronemophobic.pensieve.impl.tokenizer
+  (:require [com.phronemophobic.pensieve.impl.tokenizer
              :refer [deftokenizer
                      def-struct-tokenizer]
              :as tokenizer]
