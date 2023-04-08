@@ -6,7 +6,12 @@
   (:import (com.sun.management HotSpotDiagnosticMXBean)
            (java.lang.management ManagementFactory)))
 
-(defn heap-dump [output-path live?]
+(defn heap-dump
+  "Dumps the heap to the outputFile file in the same format as the hprof heap dump.
+
+  `output-path` - the system-dependent filename
+  `live?` - if true dump only live objects i.e. objects that are reachable from others"
+  [output-path live?]
   (let [b ^HotSpotDiagnosticMXBean
         (ManagementFactory/newPlatformMXBeanProxy
          (ManagementFactory/getPlatformMBeanServer)
