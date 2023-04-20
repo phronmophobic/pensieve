@@ -325,9 +325,11 @@
 
            ret (volatile! init)
            write! (fn [x]
-                    (let [result (vswap! ret rf x)]
-                      false
-                      #_(reduced? result)))
+                    ;; unless every tokenizer is checking for reduced?
+                    ;; need to always call rf.
+                    ;; todo: make all the tokenizers check for reduced?
+                    (vswap! ret rf x)
+                    false)
            tokenize! (fn tokenize! [type & args]
                        (if (vector? type)
                          (apply tokenize! type)
