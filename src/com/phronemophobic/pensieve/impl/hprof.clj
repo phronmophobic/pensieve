@@ -1020,7 +1020,7 @@
               :id->str id->str
               :class->str class->str}
 
-        instances (update-vals instances
+        #_#_instances (update-vals instances
                                #(hydrate-instance info %))]
     (assoc info
            :instances instances)))
