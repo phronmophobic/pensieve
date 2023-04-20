@@ -20,18 +20,22 @@
     ([result x]
      (conj! result x))))
 
-(defn begin-map [z]
-  (let [xf (partition-all 2)
-        rf (xf (coll-rf {}))]
-    [rf
-     (rf)
-     z]))
+(defn begin-map
+  ([] (begin-map nil))
+  ([z]
+   (let [xf (partition-all 2)
+         rf (xf (coll-rf {}))]
+     [rf
+      (rf)
+      z])))
 
-(defn begin-vec [z]
-  (let [rf (coll-rf [])]
-    [rf
-     (rf)
-     z]))
+(defn begin-vec
+  ([] (begin-vec nil))
+  ([z]
+   (let [rf (coll-rf [])]
+     [rf
+      (rf)
+      z])))
 
 (defn hydrate
   ([] (hydrate nil ::start-vec))
