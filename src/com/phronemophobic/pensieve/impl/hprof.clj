@@ -591,6 +591,19 @@
       (persistent!
        (tokenizer identity conj! (transient []) pbis ::hprof)))))
 
+(defn tokenize-hprof
+  ([fname]
+   (persistent!
+    (tokenize-hprof identity conj! (transient []) fname)))
+  ([xform rf init fname]
+   (let [tokenizer (tokenizer/make-tokenizer tokenizer/inputstream-readers
+                                             @tokenizer/tokenizers)]
+     (with-open [is (io/input-stream fname)
+                 pbis (PushbackInputStream. is 1)]
+       (tokenizer xform rf init pbis ::hprof)))))
+
+
+
 (defn parse-instance-values [{:keys [id->str]}
                              classes
                              instance-values]

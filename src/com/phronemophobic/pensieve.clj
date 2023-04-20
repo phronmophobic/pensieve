@@ -23,5 +23,30 @@
 (defn hprof-info [fname]
   (hprof/hprof-info fname))
 
-(defn tokenize [fname]
-  (hprof/tokenize-hprof fname))
+(defn tokenize
+  ([fname]
+   (hprof/tokenize-hprof fname))
+  ([xform rf init fname]
+   (hprof/tokenize-hprof xform rf init fname)))
+
+(comment
+  (def info (time
+             (hprof-info "../schematic/schematic2.hprof")))
+
+  (def tokens
+    (time
+     (tokenize
+      (hprof/find-key :str)
+      conj
+      []
+      "../dewey/examples/cosmos/cosmos.hprof")))
+
+  (def tokens
+    (time
+     (tokenize
+      (comp (map (constantly 1)))
+      +
+      0
+      "../dewey/examples/cosmos/cosmos.hprof")))
+
+  ,)
