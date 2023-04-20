@@ -338,4 +338,4 @@
                              (apply f args))
                            (write! (apply read! type args)))))]
        (apply tokenize! type args)
-       (rf @ret)))))
+       (rf (unreduced @ret))))))
