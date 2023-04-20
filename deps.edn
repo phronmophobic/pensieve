@@ -3,6 +3,10 @@
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "1.1.0"}}}
+  :project {:jvm-opts ["-Xmx12G"]
+            :extra-deps
+            {com.xtdb/xtdb-core {:mvn/version "1.23.1"}
+             com.xtdb/xtdb-rocksdb {:mvn/version "1.23.1"}}}
   :runner
   {:extra-deps {io.github.cognitect-labs/test-runner
                 {:git/url "https://github.com/cognitect-labs/test-runner"
