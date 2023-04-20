@@ -922,7 +922,7 @@
 
 
 
-;; helper for processing outpu
+;; helper for processing output
 (defn find-key [k]
   (let [ready? (volatile! false)
         pred (if (keyword? k)
